@@ -74,7 +74,7 @@ def main():
         st.markdown("### 🤖 AI Model Settings")
         model_type = st.selectbox(
             "Choose AI Model:",
-            ["reciclapi", "huggingface_free", "enhanced", "google_vision", "azure_cognitive", "aws_rekognition", "simple", "resnet", "huggingface"],
+            ["enhanced", "local", "resnet"],
             index=0,
             help="Select the AI model for image recognition"
         )
@@ -89,6 +89,15 @@ def main():
         st.write(f"• PyTorch: {'✅' if model_info['torch_available'] else '❌'}")
         st.write(f"• Transformers: {'✅' if model_info['transformers_available'] else '❌'}")
         st.write(f"• OpenCV: {'✅' if model_info['cv2_available'] else '❌'}")
+
+        # Training controls
+        st.markdown("---")
+        st.markdown("### 🏋️ Training")
+        epochs = st.number_input('Epochs', min_value=1, max_value=100, value=5)
+        lr = st.number_input('Learning rate', min_value=1e-5, max_value=1.0, value=1e-3, format="%f")
+        if st.button('Train Local Model'):
+            with st.spinner('Training local model...'):
+                classification_module.train_local_model(epochs=int(epochs), lr=float(lr))
     
     st.markdown("---")
     
@@ -120,6 +129,15 @@ def render_start_screen():
             st.warning("❌ Couldn't recognize item")
     
     st.markdown("### 🎯 Or select manually:")
+    st.markdown("#### Or add this image as labeled training data:")
+    label = st.selectbox('Label for training', ['plastic','paper','electronics','food','general'])
+    if st.button('Add as training data') and 'camera_input' in st.session_state:
+        # Save the last captured image as training data
+        img = st.session_state.get('camera_input')
+        if img is not None:
+            with st.spinner('Saving training image...'):
+                classification_module.add_training_data(img, label)
+                st.success('Saved as training data')
     
     # Manual selection buttons
     col1, col2, col3 = st.columns(3)
@@ -218,7 +236,26 @@ def render_qr_display_screen():
     # Generate and display QR code
     if st.session_state.transaction_id:
         qr_image = qr_generator.generate_qr(st.session_state.transaction_id)
-        st.image(qr_image, caption="Transaction QR Code", use_column_width=True)
+        # Ensure the returned object is a proper PIL Image in RGB mode.
+        try:
+            from PIL import Image as PILImage
+            pil_img = qr_image
+            # qrcode library may return a PilImage wrapper with get_image()
+            if hasattr(qr_image, 'get_image'):
+                pil_img = qr_image.get_image()
+            if not isinstance(pil_img, PILImage.Image):
+                # Try to convert from bytes
+                try:
+                    import io as _io
+                    pil_img = PILImage.open(_io.BytesIO(pil_img))
+                except Exception:
+                    pil_img = PILImage.fromarray(pil_img)
+
+            pil_img = pil_img.convert('RGB')
+        except Exception:
+            pil_img = qr_image
+
+        st.image(pil_img, caption="Transaction QR Code", use_column_width=True)
         
         st.markdown(f"**Transaction ID:** `{st.session_state.transaction_id}`")
     

@@ -5,6 +5,7 @@ Handles image recognition and trash type classification.
 
 import streamlit as st
 import numpy as np
+import os
 from PIL import Image
 import random
 import requests
@@ -36,50 +37,48 @@ class ClassificationModule:
     def __init__(self):
         self.trash_types = ['plastic', 'paper', 'electronics', 'food', 'general']
         self.confidence_threshold = 0.3
-        self.model_type = 'reciclapi'  # 'simple', 'enhanced', 'reciclapi', 'huggingface_free', 'resnet', 'huggingface', 'google_vision', 'azure_cognitive', 'aws_rekognition'
+        # Confidence threshold to accept local model predictions (adjustable)
+        self.local_confidence_threshold = 0.5
+        # Default to enhanced rule-based. 'local' allows training a local model.
+        self.model_type = 'enhanced'  # choices: 'simple', 'enhanced', 'resnet', 'local'
         self.model = None
         self.transform = None
         self._initialize_model()
     
     def _initialize_model(self):
         """Initialize the classification model"""
+        # Initialize model based on selected type. External API-backed models have
+        # been removed; preference is given to local/resnet/enhanced/simple.
         if TORCH_AVAILABLE and self.model_type == 'resnet':
             try:
-                # Load pre-trained ResNet model
+                # Load pre-trained ResNet model for feature extraction
                 self.model = models.resnet18(pretrained=True)
                 self.model.eval()
                 self.transform = transforms.Compose([
                     transforms.Resize(256),
                     transforms.CenterCrop(224),
                     transforms.ToTensor(),
-                    transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                                       std=[0.229, 0.224, 0.225])
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
                 ])
                 st.info("✅ ResNet18 model loaded successfully")
             except Exception as e:
                 st.warning(f"Failed to load ResNet model: {e}")
                 self.model_type = 'simple'
-        
+
         elif TRANSFORMERS_AVAILABLE and self.model_type == 'huggingface':
             try:
-                # Load Hugging Face model for image classification
-                self.model = pipeline("image-classification", 
-                                    model="microsoft/resnet-50", 
-                                    device=-1)  # Use CPU
-                st.info("✅ Hugging Face ResNet-50 model loaded successfully")
+                # Load a Hugging Face pipeline if requested
+                self.model = pipeline("image-classification", model="microsoft/resnet-50", device=-1)
+                st.info("✅ Hugging Face model loaded successfully")
             except Exception as e:
                 st.warning(f"Failed to load Hugging Face model: {e}")
                 self.model_type = 'simple'
-        
-        elif self.model_type == 'reciclapi':
-            st.info("Using ReciclAPI - Garbage Detection (RapidAPI)")
-        
-        elif self.model_type == 'huggingface_free':
-            st.info("Using Hugging Face free inference API (no API key required)")
-        
-        elif self.model_type in ['google_vision', 'azure_cognitive', 'aws_rekognition']:
-            st.info(f"Using {self.model_type} API (requires API key configuration)")
-        
+
+        elif self.model_type == 'local':
+            # Local model will be loaded on-demand from disk by _classify_with_local
+            st.info("Using local trained model (if available). Use 'add_training_data' and 'train_local_model' to create one.")
+
         else:
             if self.model_type == 'enhanced':
                 st.info("Using enhanced rule-based classification with bottle detection")
@@ -101,23 +100,16 @@ class ClassificationModule:
             if not isinstance(image, Image.Image):
                 image = Image.open(image)
             
-            # Use different classification methods based on available models
+            # Use different classification methods based on selected model type
             if self.model_type == 'resnet' and self.model is not None:
                 detected_type = self._classify_with_resnet(image)
             elif self.model_type == 'huggingface' and self.model is not None:
                 detected_type = self._classify_with_huggingface(image)
-            elif self.model_type == 'reciclapi':
-                detected_type = self._classify_with_reciclapi(image)
             elif self.model_type == 'huggingface_free':
                 detected_type = self._classify_with_huggingface_free(image)
-            elif self.model_type == 'google_vision':
-                detected_type = self._classify_with_google_vision(image)
-            elif self.model_type == 'azure_cognitive':
-                detected_type = self._classify_with_azure_cognitive(image)
-            elif self.model_type == 'aws_rekognition':
-                detected_type = self._classify_with_aws_rekognition(image)
+            elif self.model_type == 'local':
+                detected_type = self._classify_with_local(image)
             elif self.model_type == 'enhanced':
-                # Use enhanced analysis
                 img_array = np.array(image)
                 detected_type = self._simple_analysis(img_array)
             else:
@@ -192,92 +184,10 @@ class ClassificationModule:
     
     def _classify_with_reciclapi(self, image):
         """Classify using ReciclAPI - Garbage Detection (RapidAPI)"""
-        try:
-            # Convert image to base64
-            import base64
-            buffer = io.BytesIO()
-            image.save(buffer, format='JPEG')
-            img_base64 = base64.b64encode(buffer.getvalue()).decode()
-            
-            # ReciclAPI endpoint
-            url = "https://reciclapi-garbage-detection.p.rapidapi.com/detect"
-            
-            # Get API key from Streamlit secrets
-            # api_key = st.secrets.get("RAPIDAPI_KEY", "")
-            api_key = '8ec669bd50mshd0ec619c0efc7f9p14cd7cjsn357a9c1e8f42'
-
-            if not api_key:
-                st.warning("RapidAPI key not configured. Using enhanced analysis.")
-                img_array = np.array(image)
-                return self._simple_analysis(img_array)
-            
-            headers = {
-                "X-RapidAPI-Key": api_key,
-                "X-RapidAPI-Host": "reciclapi-garbage-detection.p.rapidapi.com",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "image": img_base64
-            }
-            
-            response = requests.post(url, json=payload, headers=headers, timeout=15)
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                # ReciclAPI returns specific garbage types
-                if 'predictions' in result:
-                    predictions = result['predictions']
-                    
-                    # Get the highest confidence prediction
-                    if predictions:
-                        best_prediction = max(predictions, key=lambda x: x.get('confidence', 0))
-                        garbage_type = best_prediction.get('class', '').lower()
-                        confidence = best_prediction.get('confidence', 0)
-                        
-                        if confidence > 0.5:  # High confidence threshold
-                            # Map ReciclAPI classes to our trash types
-                            if any(word in garbage_type for word in ['plastic', 'bottle', 'container']):
-                                return 'plastic'
-                            elif any(word in garbage_type for word in ['paper', 'cardboard', 'document']):
-                                return 'paper'
-                            elif any(word in garbage_type for word in ['electronic', 'battery', 'phone']):
-                                return 'electronics'
-                            elif any(word in garbage_type for word in ['food', 'organic', 'fruit', 'vegetable']):
-                                return 'food'
-                            elif any(word in garbage_type for word in ['glass', 'metal']):
-                                return 'plastic'  # Glass often goes with plastic recycling
-                            else:
-                                return 'general'
-                
-                # Alternative response format
-                elif 'class' in result:
-                    garbage_type = result['class'].lower()
-                    confidence = result.get('confidence', 0)
-                    
-                    if confidence > 0.5:
-                        if any(word in garbage_type for word in ['plastic', 'bottle', 'container']):
-                            return 'plastic'
-                        elif any(word in garbage_type for word in ['paper', 'cardboard', 'document']):
-                            return 'paper'
-                        elif any(word in garbage_type for word in ['electronic', 'battery', 'phone']):
-                            return 'electronics'
-                        elif any(word in garbage_type for word in ['food', 'organic', 'fruit', 'vegetable']):
-                            return 'food'
-                        else:
-                            return 'general'
-            
-            # Fallback if API fails
-            st.warning(f"ReciclAPI failed with status {response.status_code}. Using enhanced analysis.")
-            img_array = np.array(image)
-            return self._simple_analysis(img_array)
-            
-        except Exception as e:
-            st.warning(f"ReciclAPI classification failed: {e}")
-            # Final fallback
-            img_array = np.array(image)
-            return self._simple_analysis(img_array)
+        # External API support removed. Keep compatibility by using enhanced analysis.
+        st.warning("ReciclAPI support removed. Using enhanced analysis instead.")
+        img_array = np.array(image)
+        return self._simple_analysis(img_array)
     
     def _classify_with_huggingface_free(self, image):
         """Classify using Hugging Face free inference API (no API key required)"""
@@ -359,59 +269,97 @@ class ClassificationModule:
             # Final fallback
             img_array = np.array(image)
             return self._simple_analysis(img_array)
+        # Note: Hugging Face free inference removed as an external dependency; prefer local or enhanced.
     
     def _classify_with_google_vision(self, image):
-        """Classify using Google Vision API"""
+        """Classify using a Roboflow-hosted model (replaces Google Vision in this setup).
+
+        This function attempts to call a Roboflow detect endpoint:
+          https://detect.roboflow.com/{model}/{version}?api_key=YOUR_KEY
+
+        Configuration (read from Streamlit secrets or environment):
+          ROBOFLOW_API_KEY, ROBOFLOW_MODEL, ROBOFLOW_VERSION
+
+        Falls back to local enhanced analysis if Roboflow is not configured or the call fails.
+        """
         try:
-            # Convert image to base64 for API
-            import base64
+            # Prepare image bytes
             buffer = io.BytesIO()
             image.save(buffer, format='JPEG')
-            img_base64 = base64.b64encode(buffer.getvalue()).decode()
-            
-            # Google Vision API request
-            api_key = st.secrets.get("GOOGLE_VISION_API_KEY", "")
-            if not api_key:
-                st.warning("Google Vision API key not configured. Using enhanced analysis.")
-                img_array = np.array(image)
-                return self._simple_analysis(img_array)
-            
-            url = f"https://vision.googleapis.com/v1/images:annotate?key={api_key}"
-            
-            payload = {
-                "requests": [{
-                    "image": {"content": img_base64},
-                    "features": [{"type": "LABEL_DETECTION", "maxResults": 10}]
-                }]
+            img_bytes = buffer.getvalue()
+
+            # Resolve Roboflow settings from st.secrets or environment
+            rf_key = ''
+            try:
+                rf_key = st.secrets.get('ROBOFLOW_API_KEY', '')
+            except Exception:
+                rf_key = ''
+
+            if not rf_key:
+                rf_key = os.environ.get('ROBOFLOW_API_KEY', '')
+
+            rf_model = ''
+            try:
+                rf_model = st.secrets.get('ROBOFLOW_MODEL', '')
+            except Exception:
+                rf_model = ''
+            if not rf_model:
+                rf_model = os.environ.get('ROBOFLOW_MODEL', 'muc-fly/waste-classification-uwqfy')
+
+            rf_version = ''
+            try:
+                rf_version = st.secrets.get('ROBOFLOW_VERSION', '')
+            except Exception:
+                rf_version = ''
+            if not rf_version:
+                rf_version = os.environ.get('ROBOFLOW_VERSION', '1')
+
+            if not rf_key:
+                st.warning('Roboflow API key not configured. Using enhanced analysis.')
+                return self._simple_analysis(np.array(image))
+
+            # Build Roboflow detect endpoint
+            # model string often looks like 'owner/project-name' — Roboflow expects the model path component
+            # Use the provided model value directly in the URL
+            model_path = rf_model
+            version_path = rf_version
+            url = f'https://detect.roboflow.com/{model_path}/{version_path}?api_key={rf_key}'
+
+            files = {
+                'file': ('image.jpg', img_bytes, 'image/jpeg')
             }
-            
-            response = requests.post(url, json=payload)
+
+            response = requests.post(url, files=files, timeout=30)
             if response.status_code == 200:
-                labels = response.json()['responses'][0].get('labelAnnotations', [])
-                
-                # Map Google Vision labels to trash types
-                for label in labels:
-                    label_text = label['description'].lower()
-                    confidence = label['score']
-                    
-                    if confidence > 0.7:  # High confidence threshold
-                        if any(word in label_text for word in ['bottle', 'plastic', 'container', 'drink']):
+                data = response.json()
+                # Roboflow detection responses typically include a 'predictions' array
+                preds = data.get('predictions', []) if isinstance(data, dict) else []
+
+                # Map Roboflow classes to trash types
+                for p in preds:
+                    cls = str(p.get('class', '')).lower()
+                    score = float(p.get('confidence', p.get('score', 0)))
+                    if score > 0.4:
+                        if any(word in cls for word in ['plastic', 'bottle', 'container', 'can']):
                             return 'plastic'
-                        elif any(word in label_text for word in ['paper', 'document', 'cardboard']):
+                        if any(word in cls for word in ['paper', 'cardboard', 'document', 'paperboard']):
                             return 'paper'
-                        elif any(word in label_text for word in ['phone', 'computer', 'electronic', 'device']):
+                        if any(word in cls for word in ['electronic', 'battery', 'phone', 'device']):
                             return 'electronics'
-                        elif any(word in label_text for word in ['food', 'apple', 'banana', 'fruit', 'vegetable']):
+                        if any(word in cls for word in ['food', 'banana', 'fruit', 'apple', 'vegetable']):
                             return 'food'
-            
-            # Fallback if no high-confidence matches
-            img_array = np.array(image)
-            return self._simple_analysis(img_array)
-            
+
+            # Any failure or no confident matches: fallback to enhanced analysis
+            st.warning(f'Roboflow detection failed or returned no confident predictions (status {response.status_code}). Using enhanced analysis.')
+            return self._simple_analysis(np.array(image))
+
         except Exception as e:
-            st.warning(f"Google Vision API failed: {e}")
-            img_array = np.array(image)
-            return self._simple_analysis(img_array)
+            st.warning(f'Roboflow classification failed: {e}. Using enhanced analysis.')
+            return self._simple_analysis(np.array(image))
+
+    def _classify_with_roboflow(self, image):
+        """Compatibility wrapper: roboflow model uses same implementation as our Roboflow handler."""
+        return self._classify_with_google_vision(image)
     
     def _classify_with_azure_cognitive(self, image):
         """Classify using Azure Cognitive Services Computer Vision API"""
@@ -739,9 +687,29 @@ class ClassificationModule:
             _: Unused parameter (kept for compatibility)
             label: str - correct classification label
         """
-        # In a real implementation, this would save the image and label
-        # for retraining the model
-        st.info(f"Training data added: {label}")
+        # Save training image to a local directory for future training.
+        try:
+            # The first parameter may be a file-like object or PIL Image; handle both
+            img = None
+            if isinstance(_, Image.Image):
+                img = _
+            else:
+                try:
+                    img = Image.open(_)
+                except Exception:
+                    st.warning("Unable to read provided training image")
+                    return
+
+            train_dir = os.path.join('.training', label)
+            os.makedirs(train_dir, exist_ok=True)
+
+            # Create a unique filename
+            idx = len(os.listdir(train_dir)) if os.path.exists(train_dir) else 0
+            fname = os.path.join(train_dir, f"img_{idx + 1}.jpg")
+            img.save(fname, format='JPEG')
+            st.info(f"Training data saved: {fname}")
+        except Exception as e:
+            st.error(f"Failed to save training data: {e}")
     
     def reset_classifier(self):
         """Reset the classifier to default state"""
@@ -750,12 +718,151 @@ class ClassificationModule:
     
     def set_model_type(self, model_type):
         """Set the classification model type"""
-        if model_type in ['simple', 'enhanced', 'reciclapi', 'huggingface_free', 'resnet', 'huggingface', 'google_vision', 'azure_cognitive', 'aws_rekognition']:
+        if model_type in ['simple', 'enhanced', 'resnet', 'local', 'huggingface_free', 'huggingface']:
             self.model_type = model_type
             self._initialize_model()
             st.success(f"Model type set to: {model_type}")
         else:
             st.error(f"Invalid model type: {model_type}")
+
+    def train_local_model(self, epochs=5, lr=1e-3):
+        """Train a simple local classifier using saved images under .training/label/.
+
+        This is a lightweight utility. If PyTorch is available, it will run a basic
+        training loop; otherwise it will print instructions for training offline.
+        """
+        train_root = '.training'
+        if not os.path.exists(train_root):
+            st.error('No training data found. Use add_training_data to collect examples.')
+            return
+
+        if not TORCH_AVAILABLE:
+            st.warning('PyTorch not available. Please install torch to enable local training (pip install torch torchvision).')
+            return
+
+        # Simple dataset loader
+        from torchvision.datasets import ImageFolder
+        from torch.utils.data import DataLoader
+        dataset = ImageFolder(train_root, transform=transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ]))
+
+        if len(dataset) == 0:
+            st.error('No images found in .training. Add images using add_training_data.')
+            return
+
+        loader = DataLoader(dataset, batch_size=8, shuffle=True)
+
+        # Create a small model (transfer learning from resnet18)
+        model = models.resnet18(pretrained=True)
+        num_ftrs = model.fc.in_features
+        model.fc = torch.nn.Linear(num_ftrs, len(dataset.classes))
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model = model.to(device)
+
+        criterion = torch.nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+        model.train()
+        for epoch in range(epochs):
+            running = 0
+            for inputs, labels in loader:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                running += loss.item()
+            st.info(f'Training epoch {epoch+1}/{epochs} loss={running/len(loader):.4f}')
+
+        # Save trained model
+        os.makedirs('.models', exist_ok=True)
+        model_path = os.path.join('.models', 'local_classifier.pth')
+        torch.save({'model_state_dict': model.state_dict(), 'classes': dataset.classes}, model_path)
+        st.success(f'Local model trained and saved to {model_path}')
+
+    def _classify_with_local(self, image):
+        """Classify using a locally trained model saved under .models/local_classifier.pth"""
+        model_path = os.path.join('.models', 'local_classifier.pth')
+        if not os.path.exists(model_path) or not TORCH_AVAILABLE:
+            # Fall back to enhanced analysis
+            st.warning('No local model found or PyTorch unavailable. Using enhanced analysis.')
+            return self._simple_analysis(np.array(image))
+
+        try:
+            checkpoint = torch.load(model_path, map_location='cpu')
+            classes = checkpoint.get('classes', None)
+            # Rebuild model architecture
+            model = models.resnet18(pretrained=True)
+            num_ftrs = model.fc.in_features
+            model.fc = torch.nn.Linear(num_ftrs, len(classes))
+            model.load_state_dict(checkpoint['model_state_dict'])
+            model.eval()
+
+            # Preprocess image
+            img = image.convert('RGB')
+            inp = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])(img).unsqueeze(0)
+
+            with torch.no_grad():
+                outputs = model(inp)
+                probs = torch.nn.functional.softmax(outputs[0], dim=0)
+                top_idx = torch.argmax(probs).item()
+                top_prob = float(probs[top_idx].item())
+                label = classes[top_idx] if classes else None
+
+                # Known Kaggle garbage dataset classes mapping
+                kaggle_classes = ['cardboard', 'glass', 'metal', 'paper', 'plastic', 'trash']
+                kaggle_map = {
+                    'cardboard': 'paper',
+                    'paper': 'paper',
+                    'plastic': 'plastic',
+                    'glass': 'plastic',
+                    'metal': 'plastic',
+                    'trash': 'general'
+                }
+
+                # If this model uses the Kaggle class set (order may vary), prefer that mapping
+                if classes and set([c.lower() for c in classes]) >= set(kaggle_classes):
+                    lname = label.lower() if label else ''
+                    mapped = kaggle_map.get(lname, None)
+                    if top_prob >= self.local_confidence_threshold and mapped:
+                        return mapped
+                    else:
+                        return 'general'
+
+                # Otherwise try heuristic mapping from labels to our trash types
+                if label:
+                    lname = label.lower()
+                    if any(word in lname for word in ['plastic', 'bottle', 'container', 'can']):
+                        if top_prob >= self.local_confidence_threshold:
+                            return 'plastic'
+                        return 'general'
+                    if any(word in lname for word in ['paper', 'cardboard', 'document', 'paperboard']):
+                        if top_prob >= self.local_confidence_threshold:
+                            return 'paper'
+                        return 'general'
+                    if any(word in lname for word in ['electronic', 'battery', 'phone', 'device', 'laptop']):
+                        if top_prob >= self.local_confidence_threshold:
+                            return 'electronics'
+                        return 'general'
+                    if any(word in lname for word in ['food', 'banana', 'fruit', 'apple', 'vegetable']):
+                        if top_prob >= self.local_confidence_threshold:
+                            return 'food'
+                        return 'general'
+
+                # Final fallback to enhanced analysis when uncertain
+                return self._simple_analysis(np.array(image))
+        except Exception as e:
+            st.warning(f'Local model classification failed: {e}. Using enhanced analysis.')
+            return self._simple_analysis(np.array(image))
     
     def get_model_info(self):
         """Get information about the current model"""

@@ -26,6 +26,7 @@ def create_secrets_file():
     print("3. Azure Cognitive Services")
     print("4. AWS Rekognition")
     print("5. Skip (use enhanced model only)")
+    print("6. Roboflow - Hosted model (detect endpoint)")
     
     choice = input("\nSelect API to configure (1-5): ").strip()
     
@@ -37,6 +38,8 @@ def create_secrets_file():
         setup_azure_cognitive(secrets_file)
     elif choice == '4':
         setup_aws_rekognition(secrets_file)
+    elif choice == '6':
+        setup_roboflow(secrets_file)
     elif choice == '5':
         print("[OK] Skipping API setup. Enhanced model will be used.")
         return
@@ -131,6 +134,47 @@ def setup_aws_rekognition(secrets_file):
         print("[INFO] You can now select 'AWS Rekognition' in the app")
     else:
         print("[ERROR] Missing access key or secret key. Skipping setup.")
+
+def setup_roboflow(secrets_file):
+    """Setup Roboflow hosted model configuration"""
+    print("\nRoboflow - Hosted Model Setup")
+    print("-" * 35)
+
+    print("1. Go to: https://universe.roboflow.com/ and sign in")
+    print("2. Open your model page and find the 'Detect' endpoint info")
+    print("3. Note the model path (e.g. user/model-name) and version number")
+    print("4. Copy your Roboflow API key from your account settings")
+
+    api_key = input("\nEnter your Roboflow API key: ").strip()
+    model = input("Enter your Roboflow model path (e.g. muc-fly/waste-classification-uwqfy): ").strip()
+    version = input("Enter Roboflow model version (default: 1): ").strip() or "1"
+
+    if api_key and model:
+        # Ensure directory exists
+        if not os.path.exists('.streamlit'):
+            os.makedirs('.streamlit')
+
+        # Append or create secrets file without clobbering other keys
+        existing = {}
+        if os.path.exists(secrets_file):
+            with open(secrets_file, 'r') as f:
+                for line in f:
+                    if '=' in line:
+                        k, v = line.split('=', 1)
+                        existing[k.strip()] = v.strip()
+
+        existing['ROBOFLOW_API_KEY'] = f'"{api_key}"'
+        existing['ROBOFLOW_MODEL'] = f'"{model}"'
+        existing['ROBOFLOW_VERSION'] = f'"{version}"'
+
+        with open(secrets_file, 'w') as f:
+            for k, v in existing.items():
+                f.write(f"{k} = {v}\n")
+
+        print("[OK] Roboflow configured!")
+        print("[INFO] You can now select 'roboflow' in the app")
+    else:
+        print("[ERROR] Missing Roboflow API key or model path. Skipping setup.")
 
 def show_current_config():
     """Show current API configuration"""
