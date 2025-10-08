@@ -1,4 +1,4 @@
-# Smart Bin Interface
+# Smart Bin Interface (created using AI, cursor and vscode copilot)
 
 A Streamlit-based interface for smart recycling bins with camera recognition, manual trash type selection, and QR code generation for points collection.
 
