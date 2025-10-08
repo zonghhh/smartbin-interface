@@ -16,7 +16,8 @@ ENV/
 
 # --- Streamlit secrets ---
 .streamlit/secrets.toml
-*.streamlit/secrets.toml
+smart-bin-interface\.streamlit\secrets.toml
+secrets.toml
 
 # --- Jupyter / VSCode / IDE files ---
 .ipynb_checkpoints/
