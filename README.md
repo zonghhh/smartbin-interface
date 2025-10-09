@@ -9,7 +9,7 @@ A Streamlit-based interface for smart recycling bins with camera recognition, ma
 - ⏰ **Bin Operation**: Simulated bin opening with countdown timer
 - 📱 **QR Code Generation**: Generate QR codes for transaction tracking and points collection
 - 😊 **User Feedback**: Rating system for user experience feedback
-- 🔄 **Auto-return**: Automatic return to start screen after timeout
+~~- 🔄 **Auto-return**: Automatic return to start screen after timeout~~
 
 ## Installation
 
