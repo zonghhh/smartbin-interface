@@ -50,14 +50,14 @@ smart-bin-interface/
 2. **Recognition**: Automatic trash type detection or manual selection
 3. **Bin Operation**: Confirmation message and 20-second countdown timer
 4. **QR Display**: Transaction QR code and user feedback options
-5. **Auto-return**: Automatic return to start screen after 30 seconds
+5. ~~**Auto-return**: Automatic return to start screen after 30 seconds~~
 
 ## Configuration
 
 The app uses session state to manage different screens and user interactions. Key configuration options:
 
 - **Timer Duration**: 20 seconds for bin open time
-- **Auto-return Timeout**: 30 seconds before returning to start
+- ~~**Auto-return Timeout**: 30 seconds before returning to start~~
 - **Camera Mode**: Mock mode when camera is not available
 - **QR Code Format**: Transaction ID with timestamp
 
