@@ -171,12 +171,12 @@ class UIScreens:
         
         return None
     
-    def render_auto_return_timer(self, remaining_seconds: int):
-        """Render the auto-return timer"""
-        if remaining_seconds > 0:
-            st.markdown(f"⏰ Auto-return in {remaining_seconds} seconds...")
-        else:
-            st.markdown("🔄 Returning to start screen...")
+    # def render_auto_return_timer(self, remaining_seconds: int):
+    #     """Render the auto-return timer"""
+    #     if remaining_seconds > 0:
+    #         st.markdown(f"⏰ Auto-return in {remaining_seconds} seconds...")
+    #     else:
+    #         st.markdown("🔄 Returning to start screen...")
     
     def render_error_message(self, message: str, error_type: str = "error"):
         """Render error messages"""

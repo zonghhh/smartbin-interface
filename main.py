@@ -3,6 +3,7 @@ Smart Bin Interface - Main Application
 A Streamlit-based interface for smart recycling bins with camera recognition,
 manual trash type selection, and QR code generation for points collection.
 """
+# good enough lah
 
 import streamlit as st
 import time
@@ -51,6 +52,7 @@ def reset_app_state():
     st.session_state.transaction_id = None
     st.session_state.timer_active = False
     st.session_state.countdown = 0
+    st.session_state.auto_return_timer = None
 
 def start_bin_timer():
     """Start the 20-second bin open timer"""
@@ -169,12 +171,12 @@ def render_start_screen():
             st.session_state.selected_type = "general"
             proceed_with_selection()
     
-    # Confirm detected type if available
-    if st.session_state.detected_type and not st.session_state.selected_type:
-        st.markdown("### ✅ Confirm detected type:")
-        if st.button(f"Confirm: {st.session_state.detected_type.title()}", type="primary"):
-            st.session_state.selected_type = st.session_state.detected_type
-            proceed_with_selection()
+    # # Confirm detected type if available
+    # if st.session_state.detected_type and not st.session_state.selected_type:
+    #     st.markdown("### ✅ Confirm detected type:")
+    #     if st.button(f"Confirm: {st.session_state.detected_type.title()}", type="primary"):
+    #         st.session_state.selected_type = st.session_state.detected_type
+    #         proceed_with_selection()
 
 def proceed_with_selection():
     """Proceed to bin opening after type selection"""
@@ -291,7 +293,7 @@ def render_qr_display_screen():
         st.rerun()
     
     # Auto-return after 30 seconds
-    if 'auto_return_timer' not in st.session_state:
+    if 'auto_return_timer' not in st.session_state or st.session_state.auto_return_timer is None:
         st.session_state.auto_return_timer = time.time()
     
     elapsed = time.time() - st.session_state.auto_return_timer
