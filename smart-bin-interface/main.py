@@ -13,19 +13,6 @@ from components.classification_module import ClassificationModule
 from components.ui_screens import UIScreens
 from utils.qr_generator import QRGenerator
 
-
-# --- Debugging Info ---
-st.markdown("### 🧩 Debug Panel")
-st.json({
-    "app_state": st.session_state.get("app_state"),
-    "timer_active": st.session_state.get("timer_active"),
-    "countdown": st.session_state.get("countdown"),
-    "transaction_id": st.session_state.get("transaction_id"),
-    "selected_type": st.session_state.get("selected_type"),
-    "timer_start_time": st.session_state.get("timer_start_time")
-})
-st.divider()
-
 # Configure Streamlit page
 st.set_page_config(
     page_title="Smart Bin Interface",
@@ -181,13 +168,7 @@ def proceed_with_selection():
 
 def render_bin_open_screen():
     """Render the bin open screen with countdown"""
-
-    st.write("DEBUG:", {
-        "timer_active": st.session_state.get("timer_active"),
-        "countdown": st.session_state.get("countdown"),
-        "timer_start_time": st.session_state.get("timer_start_time"),
-    })
-
+    
     trash_type = st.session_state.selected_type
     emoji_map = {
         'plastic': '🧴',
@@ -196,103 +177,96 @@ def render_bin_open_screen():
         'food': '🍎',
         'general': '🗑'
     }
+    
     emoji = emoji_map.get(trash_type, '🗑')
-
+    
     st.markdown(f"### {emoji} {trash_type.title()} bin opened!")
     st.success(f"✅ {trash_type.title()} bin opened for {trash_type}")
-
-    # Countdown logic
+    
+    # Countdown display
     if st.session_state.timer_active:
+        # Calculate remaining time
         elapsed = time.time() - st.session_state.timer_start_time
-        remaining = max(0, 5 - elapsed)
+        remaining = max(0, 20 - elapsed)
         st.session_state.countdown = int(remaining)
-
+        
         if remaining > 0:
             st.markdown(f"### ⏰ Bin will close in: {st.session_state.countdown} seconds")
-            st.progress((5 - remaining) / 5)
-            # 👇 No st.rerun() here — let Streamlit handle re-render naturally
+            
+            # Progress bar
+            progress = (20 - remaining) / 20
+            st.progress(progress)
+            
+            # Auto-refresh every second
+            time.sleep(1)
             st.rerun()
         else:
-            # ✅ Transition only once
             st.session_state.timer_active = False
             st.session_state.app_state = 'qr_display'
             st.rerun()
-
     else:
-        # ✅ Only transition if not already showing QR
-        if st.session_state.app_state != 'qr_display':
-            st.markdown("### ⏰ Bin closed! Please wait for your QR code...")
-            time.sleep(1)
-            st.session_state.app_state = 'qr_display'
-            st.rerun()
-
+        st.markdown("### ⏰ Bin closed!")
+        st.session_state.app_state = 'qr_display'
+        st.rerun()
 
 def render_qr_display_screen():
-    """Render the QR code display and rating screen (no timers, only manual control)."""
-
-    # --- 🔒 Force stop all possible timers or countdowns ---
-    st.session_state.timer_active = False
-    st.session_state.countdown = 0
-    st.session_state.timer_start_time = 0
-
-    # Remove any lingering custom timer references
-    if "timer" in st.session_state:
-        try:
-            st.session_state.timer.stop_all_timers()
-        except Exception:
-            pass
-
-    # --- 🧹 Clear any old rerun triggers or leftover state ---
-    st.session_state.pop("auto_return_timer", None)
-    st.session_state.pop("last_transaction_id", None)
-
-    # --- UI content ---
+    """Render the QR code display and rating screen"""
+    
     st.markdown("### 🎉 Thank you for recycling!")
     st.markdown("Scan this QR code to collect your recycling points:")
-
-    if st.session_state.get("transaction_id"):
+    
+    # Generate and display QR code
+    if st.session_state.transaction_id:
         qr_image = qr_generator.generate_qr(st.session_state.transaction_id)
         st.image(qr_image, caption="Transaction QR Code", use_column_width=True)
+        
         st.markdown(f"**Transaction ID:** `{st.session_state.transaction_id}`")
-
+    
+    # Rating buttons
     st.markdown("### How was your experience?")
+    
     col1, col2, col3 = st.columns(3)
-
-    # --- Feedback buttons ---
+    
     with col1:
         if st.button("😊 Great!", use_container_width=True):
             st.success("Thank you for your feedback!")
             time.sleep(1)
             reset_app_state()
             st.rerun()
-
+    
     with col2:
         if st.button("😐 Okay", use_container_width=True):
             st.info("Thank you for your feedback!")
             time.sleep(1)
             reset_app_state()
             st.rerun()
-
+    
     with col3:
         if st.button("😞 Poor", use_container_width=True):
             st.warning("Thank you for your feedback!")
             time.sleep(1)
             reset_app_state()
             st.rerun()
-
-    # --- Manual Done button only ---
-    st.markdown("### ✅ When you're finished:")
+    
+    # Done button
     if st.button("✅ Done", type="primary", use_container_width=True):
         reset_app_state()
         st.rerun()
+    
+    # Auto-return after 30 seconds
+    if 'auto_return_timer' not in st.session_state:
+        st.session_state.auto_return_timer = time.time()
+    
+    elapsed = time.time() - st.session_state.auto_return_timer
+    remaining = max(0, 30 - elapsed)
+    
+    if remaining > 0:
+        st.markdown(f"⏰ Auto-return in {int(remaining)} seconds...")
+    else:
+        st.markdown("🔄 Returning to start screen...")
+        time.sleep(2)
+        reset_app_state()
+        st.rerun()
 
-    # --- Debug info (optional) ---
-    st.write("🧩 Debug:", {
-        "timer_active": st.session_state.get("timer_active"),
-        "countdown": st.session_state.get("countdown"),
-        "timer_start_time": st.session_state.get("timer_start_time"),
-        "app_state": st.session_state.get("app_state"),
-    })
-        
 if __name__ == "__main__":
     main()
