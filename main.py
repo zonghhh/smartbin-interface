@@ -74,7 +74,7 @@ def main():
         st.markdown("### 🤖 AI Model Settings")
         model_type = st.selectbox(
             "Choose AI Model:",
-            ["enhanced", "local", "resnet"],
+            ['roboflow', "enhanced", "local", "resnet"],
             index=0,
             help="Select the AI model for image recognition"
         )

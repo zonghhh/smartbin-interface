@@ -10,6 +10,8 @@ from PIL import Image
 import random
 import requests
 import io
+from inference_sdk import InferenceHTTPClient
+import tempfile
 
 try:
     import cv2
@@ -78,6 +80,30 @@ class ClassificationModule:
         elif self.model_type == 'local':
             # Local model will be loaded on-demand from disk by _classify_with_local
             st.info("Using local trained model (if available). Use 'add_training_data' and 'train_local_model' to create one.")
+        
+        elif self.model_type == 'roboflow':
+            try:
+                rf_key = st.secrets.get("ROBOFLOW_API_KEY", "") or os.getenv("ROBOFLOW_API_KEY")
+                rf_model = st.secrets.get("ROBOFLOW_MODEL", "") or os.getenv("ROBOFLOW_MODEL", "garbage-classification-3")
+                rf_version = st.secrets.get("ROBOFLOW_VERSION", "") or os.getenv("ROBOFLOW_VERSION", "2")
+
+                if not rf_key:
+                    st.warning("Roboflow API key not configured. Falling back to enhanced mode.")
+                    self.model_type = 'enhanced'
+                    return
+
+                from inference_sdk import InferenceHTTPClient
+                self.rf_client = InferenceHTTPClient(
+                    api_url="https://serverless.roboflow.com",
+                    api_key=rf_key
+                )
+                self.rf_model_id = f"{rf_model}/{rf_version}"
+
+                st.info(f"✅ Roboflow model initialized: {self.rf_model_id}")
+
+            except Exception as e:
+                st.warning(f"Failed to initialize Roboflow model: {e}")
+                self.model_type = 'enhanced'
 
         else:
             if self.model_type == 'enhanced':
@@ -87,38 +113,47 @@ class ClassificationModule:
     
     def classify_image(self, image):
         """
-        Classify the type of trash in the image
+        Classify the type of trash in the image.
         
         Args:
-            image: PIL Image or file-like object
+            image: PIL Image or file-like object.
             
         Returns:
-            str: Detected trash type or None if not recognized
+            str: Detected trash type or None if not recognized.
         """
         try:
             # Convert to PIL Image if needed
             if not isinstance(image, Image.Image):
                 image = Image.open(image)
-            
-            # Use different classification methods based on selected model type
-            if self.model_type == 'resnet' and self.model is not None:
+
+            # --- Roboflow model ---
+            if self.model_type == 'roboflow':
+                detected_type = self._classify_with_google_vision(image)
+
+            # --- ResNet model ---
+            elif self.model_type == 'resnet' and self.model is not None:
                 detected_type = self._classify_with_resnet(image)
+
+            # --- Hugging Face models ---
             elif self.model_type == 'huggingface' and self.model is not None:
                 detected_type = self._classify_with_huggingface(image)
             elif self.model_type == 'huggingface_free':
                 detected_type = self._classify_with_huggingface_free(image)
+
+            # --- Local custom model ---
             elif self.model_type == 'local':
                 detected_type = self._classify_with_local(image)
+
+            # --- Enhanced or simple rule-based ---
             elif self.model_type == 'enhanced':
                 img_array = np.array(image)
                 detected_type = self._simple_analysis(img_array)
             else:
-                # Fallback to simple analysis
                 img_array = np.array(image)
                 detected_type = self._analyze_image(img_array)
-            
+
             return detected_type
-            
+
         except Exception as e:
             st.error(f"Classification error: {str(e)}")
             return None
@@ -272,89 +307,108 @@ class ClassificationModule:
         # Note: Hugging Face free inference removed as an external dependency; prefer local or enhanced.
     
     def _classify_with_google_vision(self, image):
-        """Classify using a Roboflow-hosted model (replaces Google Vision in this setup).
-
-        This function attempts to call a Roboflow detect endpoint:
-          https://detect.roboflow.com/{model}/{version}?api_key=YOUR_KEY
-
-        Configuration (read from Streamlit secrets or environment):
-          ROBOFLOW_API_KEY, ROBOFLOW_MODEL, ROBOFLOW_VERSION
-
-        Falls back to local enhanced analysis if Roboflow is not configured or the call fails.
-        """
+        """Classify using Roboflow-hosted model (new Inference API)."""
         try:
-            # Prepare image bytes
+            import tempfile, json, ast
+
+            # --- Save image to bytes ---
             buffer = io.BytesIO()
-            image.save(buffer, format='JPEG')
+            image.save(buffer, format="JPEG")
+            buffer.seek(0)
             img_bytes = buffer.getvalue()
 
-            # Resolve Roboflow settings from st.secrets or environment
-            rf_key = ''
-            try:
-                rf_key = st.secrets.get('ROBOFLOW_API_KEY', '')
-            except Exception:
-                rf_key = ''
+            # --- Load secrets or env vars ---
+            rf_key = st.secrets.get("ROBOFLOW_API_KEY", "") or os.getenv("ROBOFLOW_API_KEY")
+            rf_model = st.secrets.get("ROBOFLOW_MODEL", "") or os.getenv("ROBOFLOW_MODEL", "garbage-classification-3")
+            rf_version = st.secrets.get("ROBOFLOW_VERSION", "") or os.getenv("ROBOFLOW_VERSION", "2")
 
             if not rf_key:
-                rf_key = os.environ.get('ROBOFLOW_API_KEY', '')
-
-            rf_model = ''
-            try:
-                rf_model = st.secrets.get('ROBOFLOW_MODEL', '')
-            except Exception:
-                rf_model = ''
-            if not rf_model:
-                rf_model = os.environ.get('ROBOFLOW_MODEL', 'muc-fly/waste-classification-uwqfy')
-
-            rf_version = ''
-            try:
-                rf_version = st.secrets.get('ROBOFLOW_VERSION', '')
-            except Exception:
-                rf_version = ''
-            if not rf_version:
-                rf_version = os.environ.get('ROBOFLOW_VERSION', '1')
-
-            if not rf_key:
-                st.warning('Roboflow API key not configured. Using enhanced analysis.')
+                st.warning("Roboflow API key not configured. Using enhanced analysis.")
                 return self._simple_analysis(np.array(image))
 
-            # Build Roboflow detect endpoint
-            # model string often looks like 'owner/project-name' — Roboflow expects the model path component
-            # Use the provided model value directly in the URL
-            model_path = rf_model
-            version_path = rf_version
-            url = f'https://detect.roboflow.com/{model_path}/{version_path}?api_key={rf_key}'
+            model_id = f"{rf_model}/{rf_version}"
 
-            files = {
-                'file': ('image.jpg', img_bytes, 'image/jpeg')
+            # --- Initialize Roboflow client ---
+            CLIENT = InferenceHTTPClient(
+                api_url="https://serverless.roboflow.com",
+                api_key=rf_key
+            )
+
+            # --- Save image temporarily for file-based inference ---
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp.write(img_bytes)
+                tmp.flush()
+                tmp_path = tmp.name
+
+            try:
+                result = CLIENT.infer(tmp_path, model_id=model_id)
+                st.write(result)
+            finally:
+                # Always clean up the temp file
+                os.remove(tmp_path)
+
+            # --- Normalize result if returned as a string ---
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except Exception:
+                    result = ast.literal_eval(result)
+
+            # --- Parse predictions (classification format = dict of classes) ---
+            raw_preds = result.get("predictions", {})
+            preds = []
+
+            if isinstance(raw_preds, dict):
+                # classification format (each key = class name)
+                for cls_name, info in raw_preds.items():
+                    if isinstance(info, dict):
+                        preds.append({
+                            "class": cls_name,
+                            "confidence": float(info.get("confidence", 0))
+                        })
+            elif isinstance(raw_preds, list):
+                # fallback if it's detection format
+                preds = [
+                    {"class": p.get("class", ""), "confidence": float(p.get("confidence", 0))}
+                    for p in raw_preds if isinstance(p, dict)
+                ]
+
+            if not preds:
+                st.warning("No predictions returned from Roboflow. Using enhanced analysis.")
+                return self._simple_analysis(np.array(image))
+
+            # --- Your original mapping (unchanged) ---
+            CONF_THRESHOLD = 0
+            CLASS_MAP = {
+                "biological": "food",
+                "cardboard": "paper",
+                "brown-glass": "glass",
+                'green-glass': 'glass',
+                'white-glass': 'glass',
+                "battery": "electronics",
+                'metal': 'electronics',
+                "paper": "paper",
+                "plastic": "plastic",
+                "shoes": "general",
+                None: "general",
+                "": "general",
+                'clothes': 'general',
+                'trash': 'general'
             }
 
-            response = requests.post(url, files=files, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                # Roboflow detection responses typically include a 'predictions' array
-                preds = data.get('predictions', []) if isinstance(data, dict) else []
+            # --- Pick the highest-confidence prediction ---
+            best_pred = max(preds, key=lambda p: p.get("confidence", 0))
+            cls_raw = str(best_pred.get("class", "")).lower()
+            conf = float(best_pred.get("confidence", 0))
 
-                # Map Roboflow classes to trash types
-                for p in preds:
-                    cls = str(p.get('class', '')).lower()
-                    score = float(p.get('confidence', p.get('score', 0)))
-                    if score > 0.4:
-                        if any(word in cls for word in ['plastic', 'bottle', 'container', 'can']):
-                            return 'plastic'
-                        if any(word in cls for word in ['paper', 'cardboard', 'document', 'paperboard']):
-                            return 'paper'
-                        if any(word in cls for word in ['electronic', 'battery', 'phone', 'device']):
-                            return 'electronics'
-                        if any(word in cls for word in ['food', 'banana', 'fruit', 'apple', 'vegetable']):
-                            return 'food'
-
-            # Any failure or no confident matches: fallback to enhanced analysis
-            st.warning(f'Roboflow detection failed or returned no confident predictions (status {response.status_code}). Using enhanced analysis.')
-            return self._simple_analysis(np.array(image))
+            if conf >= CONF_THRESHOLD:
+                return CLASS_MAP.get(cls_raw, "general")
+            else:
+                st.warning(f"No confident predictions from Roboflow (best={cls_raw} @ {conf:.3f}). Using enhanced analysis.")
+                return self._simple_analysis(np.array(image))
 
         except Exception as e:
-            st.warning(f'Roboflow classification failed: {e}. Using enhanced analysis.')
+            st.warning(f"Roboflow classification failed: {e}. Using enhanced analysis.")
             return self._simple_analysis(np.array(image))
 
     def _classify_with_roboflow(self, image):
@@ -718,7 +772,9 @@ class ClassificationModule:
     
     def set_model_type(self, model_type):
         """Set the classification model type"""
-        if model_type in ['simple', 'enhanced', 'resnet', 'local', 'huggingface_free', 'huggingface']:
+        valid_types = ['simple', 'enhanced', 'resnet', 'local', 'huggingface_free', 'huggingface', 'roboflow']
+
+        if model_type in valid_types:
             self.model_type = model_type
             self._initialize_model()
             st.success(f"Model type set to: {model_type}")
