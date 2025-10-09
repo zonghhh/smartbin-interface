@@ -122,7 +122,7 @@ class UIScreens:
             st.markdown(f"### ⏰ Bin will close in: {countdown} seconds")
             
             # Progress bar
-            progress = (20 - countdown) / 20
+            progress = (5 - countdown) / 5
             st.progress(progress)
             
             # Visual countdown
@@ -171,12 +171,12 @@ class UIScreens:
         
         return None
     
-    def render_auto_return_timer(self, remaining_seconds: int):
-        """Render the auto-return timer"""
-        if remaining_seconds > 0:
-            st.markdown(f"⏰ Auto-return in {remaining_seconds} seconds...")
-        else:
-            st.markdown("🔄 Returning to start screen...")
+    # def render_auto_return_timer(self, remaining_seconds: int):
+    #     """Render the auto-return timer"""
+    #     if remaining_seconds > 0:
+    #         st.markdown(f"⏰ Auto-return in {remaining_seconds} seconds...")
+    #     else:
+    #         st.markdown("🔄 Returning to start screen...")
     
     def render_error_message(self, message: str, error_type: str = "error"):
         """Render error messages"""

@@ -51,6 +51,11 @@ def reset_app_state():
     st.session_state.transaction_id = None
     st.session_state.timer_active = False
     st.session_state.countdown = 0
+    if 'auto_return_timer' in st.session_state:
+        del st.session_state.auto_return_timer
+    if 'auto_return_timer_initialized' in st.session_state:
+        del st.session_state.auto_return_timer_initialized
+    st.session_state.just_reset = True
 
 def start_bin_timer():
     """Start the 20-second bin open timer"""
@@ -68,6 +73,12 @@ def main():
     
     # Display header
     st.title("🗑️ Smart Recycling Bin")
+
+    # Handle post-reset rerun
+    if st.session_state.get("just_reset"):
+        st.session_state.just_reset = False
+        st.rerun()
+
     
     # Model selection sidebar
     with st.sidebar:
@@ -291,8 +302,9 @@ def render_qr_display_screen():
         st.rerun()
     
     # Auto-return after 30 seconds
-    if 'auto_return_timer' not in st.session_state:
+    if 'auto_return_timer_initialized' not in st.session_state or not st.session_state.auto_return_timer_initialized:
         st.session_state.auto_return_timer = time.time()
+        st.session_state.auto_return_timer_initialized = True
     
     elapsed = time.time() - st.session_state.auto_return_timer
     remaining = max(0, 30 - elapsed)
